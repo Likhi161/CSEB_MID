@@ -5,21 +5,22 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
 
-# ---------------- SONARQUBE JOB ----------------
+# ---------------- SONAR ----------------
   sonar:
-    name: SonarQube Analysis
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v3
+      - uses: sonarsource/sonarqube-scan-action@v3
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -28,124 +29,74 @@ jobs:
             -Dsonar.projectKey=cseb_mid
             -Dsonar.sources=.
 
-      - name: SonarQube Quality Gate
-        uses: sonarsource/sonarqube-quality-gate-action@v1
+      - uses: sonarsource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-# ---------------- SNYK JOB ----------------
+# ---------------- SNYK ----------------
   snyk:
-    name: Snyk Security Scan
     runs-on: ubuntu-latest
     needs: sonar
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Run Snyk Scan (SCA)
-        uses: snyk/actions/node@master
+      - uses: snyk/actions/node@master
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           args: --severity-threshold=medium --exit-code=0
 
-# ---------------- FAILURE EMAIL JOB ----------------
-  notify:
-    name: Send Failure Email
-    runs-on: ubuntu-latest
-    needs: [sonar, snyk]
-    if: failure()
-
-    steps:
-      - name: Send Email
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-
-          subject: "❌ CI Pipeline Failed - CSEB_MID"
-
-          body: |
-            🚨 CI PIPELINE FAILURE ALERT 🚨
-
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-
-            ❌ Failed Job:
-            - SonarQube OR Snyk
-
-            🔗 Logs:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-            👨‍💻 Triggered by: ${{ github.actor }}
-
-          to: ${{ secrets.RECIVER_EMAIL }}
-          from: "DevOps Alerts <${{ secrets.EMAIL_USERNAME }}>"
-
-# ---------------- DOCKER JOB ----------------
+# ---------------- DOCKER + GITOPS ----------------
   docker:
-    name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [sonar, snyk]
-
-    permissions:
-      contents: read
-      packages: write
+    needs: snyk
 
     steps:
+      - uses: actions/checkout@v4
 
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      # ✅ FIX: Convert repo name to lowercase
-      - name: Set lowercase image name
+      # 🔥 Image name with SHA
+      - name: Set image name
         run: |
-          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}:latest" >> $GITHUB_ENV
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> $GITHUB_ENV
           echo "CACHE_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:buildcache" >> $GITHUB_ENV
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push with Cache
-        uses: docker/build-push-action@v5
+      # 🚀 Build + Cache + Push
+      - uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ env.IMAGE_NAME }}
-
-          
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
           cache-to: type=registry,ref=${{ env.CACHE_IMAGE }},mode=max
-  approval:
-    name: Manual Approval for Deployment
-    runs-on: ubuntu-latest
-    needs: docker
 
-    environment:
-      name: production   
+      # 🔄 Update YAML
+      - name: Update Kubernetes manifest
+        run: |
+          sed -i "s|image:.*|image: $IMAGE_NAME|g" k8s/app-deployment.yaml
 
-    steps:
-      - name: Awaiting approval
-        run: echo "Deployment approved. Ready for CD stage."
+      # 🔁 Push back to repo
+      - name: Commit & Push
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git add k8s/app-deployment.yaml
+          git commit -m "Update image to $IMAGE_NAME" || echo "No changes"
+          git push
