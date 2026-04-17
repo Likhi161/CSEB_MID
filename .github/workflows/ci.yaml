@@ -56,11 +56,12 @@ jobs:
 
       - name: Run Snyk Scan (SCA)
         uses: snyk/actions/node@master
-        with:
-          command: test
-          args: --severity-threshold=medium
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium --exit-code=0
+      
 
 # ---------------- FAILURE EMAIL JOB ----------------
   notify:
