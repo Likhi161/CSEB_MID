@@ -5,8 +5,7 @@ on:
     branches:
       - main
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ghcr.io/likhi161/cseb_mid:latest
 jobs:
 
 # ---------------- SONARQUBE JOB ----------------
