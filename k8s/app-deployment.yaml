@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: skillexchange-app
-        image: hardyboy20/skillexchange-app:latest
+        image: ghcr.io/likhi161/cseb_mid:f4f81954abfa57a30d3273230f7d5a6649adda74
         ports:
         - containerPort: 3000
           name: http
