@@ -55,7 +55,7 @@ jobs:
         run: npm install
 
       - name: Run Snyk Scan (SCA)
-        uses: snyk/actions/node@v3
+        uses: snyk/actions/node@master
         with:
           command: test
           args: --severity-threshold=medium
